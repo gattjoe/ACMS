@@ -6,13 +6,10 @@ on:
   push:
     branches:
       - "main"
-  pull_request:
-    branches:
-      - "main"
 
 jobs:
   build:
-    if: ${{ (github.repository == 'gattjoe/OCSPChecker') }}
+    if: ${{ (github.repository == 'gattjoe/ACMS') }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
