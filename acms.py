@@ -1245,7 +1245,8 @@ async def main() -> None:
     finally:
         logger.info("ACMS shutdown complete")
 
-if __name__ == "__main__":
+def cli_main():
+    """Entry point for the pip-installed acms command."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -1253,3 +1254,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Fatal error: {e}", file=sys.stderr)
         raise
+
+if __name__ == "__main__":
+    cli_main()
