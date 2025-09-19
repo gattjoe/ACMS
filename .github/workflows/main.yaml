@@ -1,0 +1,43 @@
+# .github/workflows/main.yml
+
+name: build
+permissions: {} # https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/controlling-permissions-for-github_token#defining-access-for-the-github_token-permissions
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  build:
+    if: ${{ (github.repository == 'gattjoe/OCSPChecker') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # tag=v5.0.0
+      - name: Set up Python 3.x
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # tag=v6.0.0
+        with:
+          python-version: "3.13"
+          architecture: "x64"
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install build twine
+      - name: Build pypy package
+        run: |
+          python -m build
+      - name: Check package
+        run: |
+          twine check dist/*
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # tag=v4.6.2
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Attest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # tag=v3.0.0
+        with:
+          subject-path: "${{ github.workspace }}/dist"
