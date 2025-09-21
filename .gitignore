@@ -139,3 +139,7 @@ __marimo__/
 
 # Claude
 .claude
+
+# Local Development
+server.crt
+server.key
