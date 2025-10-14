@@ -1,2 +1,5 @@
 fastmcp==2.12.3
 mcp==1.14.0
+pyjwt==2.10.1
+python-dotenv>=1.1.0
+cryptography==44.0.0
