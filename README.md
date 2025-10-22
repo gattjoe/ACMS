@@ -41,7 +41,7 @@ container system status
 ./start-acms.sh
 
 # Or start directly with custom options
-python3 acms/acms.py --port 8765 --host 127.0.0.1
+python3 acms/acms.py --port 8765 --host 127.0.0.1 > acms.log 2>&1 &
 ```
 
 ### Configure MCP Client

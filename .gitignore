@@ -143,3 +143,6 @@ __marimo__/
 # Local Development
 server.crt
 server.key
+
+# Node
+node_modules/
