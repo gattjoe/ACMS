@@ -1766,17 +1766,6 @@ async def main() -> None:
             "See: https://github.com/apple/container for installation instructions."
         )
 
-    # Log OAuth configuration
-    if enable_auth:
-        logger.info("=" * 80)
-        logger.info("OAuth 2.1 Authentication Configuration")
-        logger.info("=" * 80)
-        logger.info(f"Resource Server URL: {resource_url}")
-        logger.info(
-            f"Required Scopes: {required_scopes if required_scopes else 'None'}"
-        )
-        logger.info("=" * 80)
-
     # Validate SSL configuration if SSL is enabled
     if use_ssl:
         if not os.path.isfile(cert_file):
