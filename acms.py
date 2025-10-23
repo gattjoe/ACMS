@@ -21,15 +21,21 @@ from typing import Any, Dict, List, Optional, TypeAlias
 
 import fastmcp
 import uvicorn
+from dotenv import load_dotenv
+
+from auth import EntraAuthProvider
+
+# Load environment variables
+load_dotenv()
 
 CommandResult: TypeAlias = Dict[str, Any]
 
 # Configure enhanced logging to stderr to avoid interfering with stdio communication
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - [PID:%(process)d] [%(funcName)s:%(lineno)d] - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - [PID:%(process)d] [%(funcName)s:%(lineno)d] - %(message)s",
     stream=sys.stderr,
-    force=True  # Ensure our config overrides any existing config
+    force=True,  # Ensure our config overrides any existing config
 )
 logger = logging.getLogger("ACMS")
 
@@ -47,16 +53,59 @@ logging.getLogger("httpx").setLevel(logging.DEBUG)
 logging.getLogger("httpcore").setLevel(logging.DEBUG)
 
 # Force all loggers to use our stderr handler
-for logger_name in ["uvicorn", "uvicorn.access", "uvicorn.error", "uvicorn.asgi", "uvicorn.protocols",
-                   "uvicorn.protocols.http", "fastmcp", "mcp", "starlette"]:
+for logger_name in [
+    "uvicorn",
+    "uvicorn.access",
+    "uvicorn.error",
+    "uvicorn.asgi",
+    "uvicorn.protocols",
+    "uvicorn.protocols.http",
+    "fastmcp",
+    "mcp",
+    "starlette",
+]:
     specific_logger = logging.getLogger(logger_name)
     specific_logger.handlers.clear()
     stderr_handler = logging.StreamHandler(sys.stderr)
-    stderr_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - [PID:%(process)d] - %(message)s'
-    ))
+    stderr_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - [PID:%(process)d] - %(message)s"
+        )
+    )
     specific_logger.addHandler(stderr_handler)
     specific_logger.propagate = False
+
+
+def _validate_container_arg(arg: str) -> str:
+    """
+    Validate container command arguments to prevent command injection.
+
+    Args:
+        arg: Command argument to validate
+
+    Returns:
+        str: Validated argument
+
+    Raises:
+        ValueError: If argument contains forbidden characters
+    """
+    if not isinstance(arg, str):
+        raise ValueError(f"Argument must be a string, got {type(arg).__name__}")
+
+    # Disallow dangerous characters that could be used for command injection
+    forbidden_chars = [";", "|", "&", "$", "`", "\n", "\r", "\x00"]
+    for char in forbidden_chars:
+        if char in arg:
+            raise ValueError(f"Invalid character '{repr(char)}' in argument. ")
+
+    # Additional check for shell metacharacters
+    if arg.strip().startswith("-") and any(c in arg for c in ["$(", "${", "`"]):
+        raise ValueError(
+            f"Argument appears to contain shell command substitution: {arg}. "
+        )
+
+    return arg
+
 
 def check_container_available() -> bool:
     """
@@ -66,6 +115,7 @@ def check_container_available() -> bool:
     logger.info(f"Container CLI availability check: {available}")
 
     return available
+
 
 async def run_container_command(*args: str) -> CommandResult:
     """
@@ -79,24 +129,30 @@ async def run_container_command(*args: str) -> CommandResult:
 
     Raises:
         RuntimeError: If command execution fails
+        ValueError: If arguments contain forbidden characters
     """
     start_time = time.time()
     command_id = str(uuid.uuid4())[:8]
 
-    cmd = ["container"] + list(args)
+    # Validate all arguments to prevent command injection
+    try:
+        validated_args = [_validate_container_arg(arg) for arg in args]
+    except ValueError as e:
+        logger.error(f"[Command {command_id}] Argument validation failed: {e}")
+        raise ValueError(f"Invalid command argument: {e}")
+
+    cmd = ["container"] + validated_args
     logger.info(f"[Command {command_id}] Executing: {' '.join(cmd)}")
 
     try:
         process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
 
         stdout, stderr = await process.communicate()
 
-        stdout_text = stdout.decode('utf-8', errors='replace') if stdout else ""
-        stderr_text = stderr.decode('utf-8', errors='replace') if stderr else ""
+        stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+        stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
         duration = time.time() - start_time
 
         result = {
@@ -105,16 +161,22 @@ async def run_container_command(*args: str) -> CommandResult:
             "return_code": process.returncode,
             "command": " ".join(cmd),
             "duration": duration,
-            "command_id": command_id
+            "command_id": command_id,
         }
 
         # Log command completion with detailed results
         if process.returncode == 0:
-            logger.info(f"[Command {command_id}] Completed successfully (exit code: 0) in {duration:.3f}s")
+            logger.info(
+                f"[Command {command_id}] Completed successfully (exit code: 0) in {duration:.3f}s"
+            )
         else:
-            logger.warning(f"[Command {command_id}] Failed with exit code: {process.returncode} in {duration:.3f}s")
+            logger.warning(
+                f"[Command {command_id}] Failed with exit code: {process.returncode} in {duration:.3f}s"
+            )
             if stderr_text:
-                logger.warning(f"[Command {command_id}] Error output: {stderr_text.strip()}")
+                logger.warning(
+                    f"[Command {command_id}] Error output: {stderr_text.strip()}"
+                )
 
         return result
 
@@ -125,6 +187,7 @@ async def run_container_command(*args: str) -> CommandResult:
         logger.error(f"[Command {command_id}] Stack trace:", exc_info=True)
 
         raise RuntimeError(f"Failed to execute command: {e}")
+
 
 def validate_array_parameter(param: Any, param_name: str) -> Optional[List[str]]:
     """
@@ -147,26 +210,38 @@ def validate_array_parameter(param: Any, param_name: str) -> Optional[List[str]]
         # Already a list, validate all elements are strings
         if all(isinstance(item, str) for item in param):
             if len(param) == 0:
-                raise ValueError(f"Parameter '{param_name}' cannot be an empty array. Either omit the parameter or provide at least one item.")
+                raise ValueError(
+                    f"Parameter '{param_name}' cannot be an empty array. Either omit the parameter or provide at least one item."
+                )
             return param
         else:
-            raise ValueError(f"Parameter '{param_name}' must be a list of strings, but contains non-string elements: {[type(item).__name__ for item in param if not isinstance(item, str)]}")
+            raise ValueError(
+                f"Parameter '{param_name}' must be a list of strings, but contains non-string elements: {[type(item).__name__ for item in param if not isinstance(item, str)]}"
+            )
 
     if isinstance(param, str):
         # Try to parse as JSON array
         try:
             parsed = json.loads(param)
-            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+            if isinstance(parsed, list) and all(
+                isinstance(item, str) for item in parsed
+            ):
                 if len(parsed) == 0:
-                    raise ValueError(f"Parameter '{param_name}' cannot be an empty array. Either omit the parameter or provide at least one item.")
+                    raise ValueError(
+                        f"Parameter '{param_name}' cannot be an empty array. Either omit the parameter or provide at least one item."
+                    )
                 return parsed
             else:
-                raise ValueError(f"Parameter '{param_name}' JSON must be an array of strings, but got: {type(parsed).__name__} with elements: {[type(item).__name__ for item in parsed] if isinstance(parsed, list) else 'N/A'}")
+                raise ValueError(
+                    f"Parameter '{param_name}' JSON must be an array of strings, but got: {type(parsed).__name__} with elements: {[type(item).__name__ for item in parsed] if isinstance(parsed, list) else 'N/A'}"
+                )
         except json.JSONDecodeError:
             # Not JSON, treat as single string and convert to list
             return [param]
 
-    raise ValueError(f"Parameter '{param_name}' must be a string, array of strings, or null, but got: {type(param).__name__}")
+    raise ValueError(
+        f"Parameter '{param_name}' must be a string, array of strings, or null, but got: {type(param).__name__}"
+    )
 
 
 def format_command_result(result: CommandResult) -> str:
@@ -214,19 +289,67 @@ def format_command_result(result: CommandResult) -> str:
         return f"Error formatting command result: {str(e)}"
 
 
-def create_fastmcp_server() -> fastmcp.FastMCP:
+def create_fastmcp_server(
+    enable_auth: bool = False,
+    resource_server_url: Optional[str] = None,
+    required_scopes: Optional[List[str]] = None,
+) -> fastmcp.FastMCP:
     """
     Create a FastMCP server with container tools.
+
+    Args:
+        enable_auth: Enable OAuth 2.1 authentication with Microsoft Entra ID
+        resource_server_url: URL of this MCP server (for OAuth resource identification)
+        required_scopes: List of OAuth scopes required for authentication
+
+    Returns:
+        FastMCP server instance with optional OAuth authentication
     """
 
     logger.info("Creating FastMCP server instance...")
-    mcp = fastmcp.FastMCP("ACMS")
 
-    @mcp.tool(description="List containers with formatting options")
-    async def container_list(
-        all: bool = False,
-        quiet: bool = False,
-        format: str = "table"
+    # Configure OAuth authentication if enabled
+    if enable_auth:
+        logger.info("OAuth authentication ENABLED")
+
+        try:
+            # Create auth provider from environment variables
+            auth_provider = EntraAuthProvider.from_env(
+                base_url=resource_server_url, required_scopes=required_scopes
+            )
+
+            logger.info("Auth Settings:")
+            logger.info(
+                f"  Resource Server URL: {resource_server_url or 'http://localhost:8765'}"
+            )
+            logger.info(f"  Required Scopes: {required_scopes or []}")
+
+            # Create FastMCP with OAuth
+            mcp = fastmcp.FastMCP("ACMS", auth=auth_provider)
+
+            logger.info("FastMCP server created with OAuth authentication")
+
+        except Exception as e:
+            logger.error(
+                f"Failed to initialize OAuth authentication: {e}", exc_info=True
+            )
+            logger.error("Falling back to unauthenticated server")
+            mcp = fastmcp.FastMCP("ACMS")
+    else:
+        logger.info("OAuth authentication DISABLED")
+        mcp = fastmcp.FastMCP("ACMS")
+
+    @mcp.tool(
+        description="List containers with formatting options",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_list(
+        all: bool = False, quiet: bool = False, format: str = "table"
     ) -> str:
         cmd_args = ["list"]
         if all:
@@ -239,16 +362,31 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Show container system status")
-    async def system_status() -> str:
-
+    @mcp.tool(
+        description="Show container system status",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_status() -> str:
         result = await run_container_command("system", "status")
         formatted_result = format_command_result(result)
 
         return formatted_result
 
-    @mcp.tool(description="Run a command in a new container with full parameter support")
-    async def container_run(
+    @mcp.tool(
+        description="Run a command in a new container with full parameter support",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_run(
         image: str,
         command: Optional[List[str]] = None,
         cwd: Optional[str] = None,
@@ -283,21 +421,55 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         label: Optional[List[str]] = None,
         virtualization: bool = False,
         scheme: str = "auto",
-        disable_progress_updates: bool = False
+        disable_progress_updates: bool = False,
     ) -> str:
         try:
             # Validate all array parameters
-            validated_command = validate_array_parameter(command, "command") if command is not None else None
-            validated_env = validate_array_parameter(env, "env") if env is not None else None
-            validated_mount = validate_array_parameter(mount, "mount") if mount is not None else None
-            validated_publish = validate_array_parameter(publish, "publish") if publish is not None else None
-            validated_publish_socket = validate_array_parameter(publish_socket, "publish_socket") if publish_socket is not None else None
-            validated_tmpfs = validate_array_parameter(tmpfs, "tmpfs") if tmpfs is not None else None
-            validated_volume = validate_array_parameter(volume, "volume") if volume is not None else None
-            validated_dns = validate_array_parameter(dns, "dns") if dns is not None else None
-            validated_dns_search = validate_array_parameter(dns_search, "dns_search") if dns_search is not None else None
-            validated_dns_option = validate_array_parameter(dns_option, "dns_option") if dns_option is not None else None
-            validated_label = validate_array_parameter(label, "label") if label is not None else None
+            validated_command = (
+                validate_array_parameter(command, "command")
+                if command is not None
+                else None
+            )
+            validated_env = (
+                validate_array_parameter(env, "env") if env is not None else None
+            )
+            validated_mount = (
+                validate_array_parameter(mount, "mount") if mount is not None else None
+            )
+            validated_publish = (
+                validate_array_parameter(publish, "publish")
+                if publish is not None
+                else None
+            )
+            validated_publish_socket = (
+                validate_array_parameter(publish_socket, "publish_socket")
+                if publish_socket is not None
+                else None
+            )
+            validated_tmpfs = (
+                validate_array_parameter(tmpfs, "tmpfs") if tmpfs is not None else None
+            )
+            validated_volume = (
+                validate_array_parameter(volume, "volume")
+                if volume is not None
+                else None
+            )
+            validated_dns = (
+                validate_array_parameter(dns, "dns") if dns is not None else None
+            )
+            validated_dns_search = (
+                validate_array_parameter(dns_search, "dns_search")
+                if dns_search is not None
+                else None
+            )
+            validated_dns_option = (
+                validate_array_parameter(dns_option, "dns_option")
+                if dns_option is not None
+                else None
+            )
+            validated_label = (
+                validate_array_parameter(label, "label") if label is not None else None
+            )
 
             cmd_args = ["run"]
 
@@ -388,8 +560,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in container_run: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Create a new container from an image without starting it")
-    async def container_create(
+    @mcp.tool(
+        description="Create a new container from an image without starting it",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_create(
         image: str,
         command: Optional[List[str]] = None,
         name: Optional[str] = None,
@@ -400,16 +580,34 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         network: Optional[str] = None,
         label: Optional[List[str]] = None,
         user: Optional[str] = None,
-        entrypoint: Optional[str] = None
+        entrypoint: Optional[str] = None,
     ) -> str:
         try:
             # Validate all array parameters
-            validated_command = validate_array_parameter(command, "command") if command is not None else None
-            validated_env = validate_array_parameter(env, "env") if env is not None else None
-            validated_publish = validate_array_parameter(publish, "publish") if publish is not None else None
-            validated_volume = validate_array_parameter(volume, "volume") if volume is not None else None
-            validated_mount = validate_array_parameter(mount, "mount") if mount is not None else None
-            validated_label = validate_array_parameter(label, "label") if label is not None else None
+            validated_command = (
+                validate_array_parameter(command, "command")
+                if command is not None
+                else None
+            )
+            validated_env = (
+                validate_array_parameter(env, "env") if env is not None else None
+            )
+            validated_publish = (
+                validate_array_parameter(publish, "publish")
+                if publish is not None
+                else None
+            )
+            validated_volume = (
+                validate_array_parameter(volume, "volume")
+                if volume is not None
+                else None
+            )
+            validated_mount = (
+                validate_array_parameter(mount, "mount") if mount is not None else None
+            )
+            validated_label = (
+                validate_array_parameter(label, "label") if label is not None else None
+            )
 
             cmd_args = ["create"]
 
@@ -447,11 +645,17 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in container_create: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Start a stopped container with attachment options")
-    async def container_start(
-        container: str,
-        attach: bool = False,
-        interactive: bool = False
+    @mcp.tool(
+        description="Start a stopped container with attachment options",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_start(
+        container: str, attach: bool = False, interactive: bool = False
     ) -> str:
         cmd_args = ["start"]
         if attach:
@@ -463,12 +667,20 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Pull an image from a registry with platform and scheme support")
-    async def image_pull(
+    @mcp.tool(
+        description="Pull an image from a registry with platform and scheme support",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    async def acms_image_pull(
         reference: str,
         platform: Optional[str] = None,
         scheme: str = "auto",
-        disable_progress_updates: bool = False
+        disable_progress_updates: bool = False,
     ) -> str:
         cmd_args = ["image", "pull"]
         if platform:
@@ -482,11 +694,17 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="List all images with formatting options")
-    async def image_list(
-        quiet: bool = False,
-        verbose: bool = False,
-        format: str = "table"
+    @mcp.tool(
+        description="List all images with formatting options",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_list(
+        quiet: bool = False, verbose: bool = False, format: str = "table"
     ) -> str:
         cmd_args = ["image", "ls"]
         if quiet:
@@ -501,17 +719,25 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
 
     # CONTAINER MANAGEMENT TOOLS
 
-    @mcp.tool(description="Stop running containers gracefully by sending a signal")
-    async def container_stop(
-        containers: List[str],
-        signal: str = "SIGTERM",
-        time: Optional[float] = None
+    @mcp.tool(
+        description="Stop running containers gracefully by sending a signal",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_stop(
+        containers: List[str], signal: str = "SIGTERM", time: Optional[float] = None
     ) -> str:
         try:
             # Validate containers parameter
             validated_containers = validate_array_parameter(containers, "containers")
             if not validated_containers:
-                raise ValueError("Parameter 'containers' is required and cannot be empty. Provide at least one container name to stop.")
+                raise ValueError(
+                    "Parameter 'containers' is required and cannot be empty. Provide at least one container name to stop."
+                )
 
             cmd_args = ["stop"]
             if signal != "SIGTERM":
@@ -527,10 +753,17 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in container_stop: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Stop all running containers gracefully by sending a signal")
-    async def container_stop_all(
-        signal: str = "SIGTERM",
-        time: Optional[float] = None
+    @mcp.tool(
+        description="Stop all running containers gracefully by sending a signal",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_stop_all(
+        signal: str = "SIGTERM", time: Optional[float] = None
     ) -> str:
         cmd_args = ["stop", "--all"]
         if signal != "SIGTERM":
@@ -541,16 +774,23 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Immediately kill running containers by sending a signal")
-    async def container_kill(
-        containers: List[str],
-        signal: str = "KILL"
-    ) -> str:
+    @mcp.tool(
+        description="Immediately kill running containers by sending a signal",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_kill(containers: List[str], signal: str = "KILL") -> str:
         try:
             # Validate containers parameter
             validated_containers = validate_array_parameter(containers, "containers")
             if not validated_containers:
-                raise ValueError("Parameter 'containers' is required and cannot be empty. Provide at least one container name to kill.")
+                raise ValueError(
+                    "Parameter 'containers' is required and cannot be empty. Provide at least one container name to kill."
+                )
 
             cmd_args = ["kill"]
             if signal != "KILL":
@@ -564,8 +804,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in container_kill: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Immediately kill all running containers by sending a signal")
-    async def container_kill_all(signal: str = "KILL") -> str:
+    @mcp.tool(
+        description="Immediately kill all running containers by sending a signal",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_kill_all(signal: str = "KILL") -> str:
         cmd_args = ["kill", "--all"]
         if signal != "KILL":
             cmd_args.extend(["--signal", signal])
@@ -573,16 +821,23 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Remove one or more containers")
-    async def container_delete(
-        containers: List[str],
-        force: bool = False
-    ) -> str:
+    @mcp.tool(
+        description="Remove one or more containers",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_delete(containers: List[str], force: bool = False) -> str:
         try:
             # Validate containers parameter
             validated_containers = validate_array_parameter(containers, "containers")
             if not validated_containers:
-                raise ValueError("Parameter 'containers' is required and cannot be empty. Provide at least one container name to delete.")
+                raise ValueError(
+                    "Parameter 'containers' is required and cannot be empty. Provide at least one container name to delete."
+                )
 
             cmd_args = ["rm"]
             if force:
@@ -596,8 +851,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in container_delete: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Remove all containers")
-    async def container_delete_all(force: bool = False) -> str:
+    @mcp.tool(
+        description="Remove all containers",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_delete_all(force: bool = False) -> str:
         cmd_args = ["rm", "--all"]
         if force:
             cmd_args.append("--force")
@@ -605,18 +868,28 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Execute a command inside a running container")
-    async def container_exec(
+    @mcp.tool(
+        description="Execute a command inside a running container",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_exec(
         container: str,
         command: str,
         interactive: bool = False,
         tty: bool = False,
         user: Optional[str] = None,
-        env: Optional[List[str]] = None
+        env: Optional[List[str]] = None,
     ) -> str:
         try:
             # Validate array parameters
-            validated_env = validate_array_parameter(env, "env") if env is not None else None
+            validated_env = (
+                validate_array_parameter(env, "env") if env is not None else None
+            )
 
             cmd_args = ["exec"]
             if interactive:
@@ -634,11 +907,14 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
 
             # Split command string into arguments for proper execution
             import shlex
+
             try:
                 command_args = shlex.split(command)
                 cmd_args.extend(command_args)
             except ValueError as shlex_error:
-                logger.warning(f"Failed to parse command with shlex, using as single argument: {shlex_error}")
+                logger.warning(
+                    f"Failed to parse command with shlex, using as single argument: {shlex_error}"
+                )
                 cmd_args.append(command)
 
             result = await run_container_command(*cmd_args)
@@ -647,12 +923,20 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in container_exec: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Fetch logs from a container")
-    async def container_logs(
+    @mcp.tool(
+        description="Fetch logs from a container",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_logs(
         container: str,
         follow: bool = False,
         boot: bool = False,
-        n: Optional[int] = None
+        n: Optional[int] = None,
     ) -> str:
         cmd_args = ["logs"]
         if follow:
@@ -666,19 +950,35 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Display detailed container information in JSON")
-    async def container_inspect(container: str) -> str:
+    @mcp.tool(
+        description="Display detailed container information in JSON",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_inspect(container: str) -> str:
         result = await run_container_command("inspect", container)
         return format_command_result(result)
 
     # IMAGE MANAGEMENT TOOLS
 
-    @mcp.tool(description="Push an image to a registry")
-    async def image_push(
+    @mcp.tool(
+        description="Push an image to a registry",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    async def acms_image_push(
         reference: str,
         platform: Optional[str] = None,
         scheme: str = "auto",
-        disable_progress_updates: bool = False
+        disable_progress_updates: bool = False,
     ) -> str:
         cmd_args = ["image", "push"]
         if platform:
@@ -692,11 +992,17 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Save an image to a tar archive")
-    async def image_save(
-        reference: str,
-        output: Optional[str] = None,
-        platform: Optional[str] = None
+    @mcp.tool(
+        description="Save an image to a tar archive",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_save(
+        reference: str, output: Optional[str] = None, platform: Optional[str] = None
     ) -> str:
         cmd_args = ["image", "save"]
         if platform:
@@ -708,8 +1014,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Load images from a tar archive")
-    async def image_load(input: Optional[str] = None) -> str:
+    @mcp.tool(
+        description="Load images from a tar archive",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_load(input: Optional[str] = None) -> str:
         cmd_args = ["image", "load"]
         if input:
             cmd_args.extend(["--input", input])
@@ -717,18 +1031,36 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Apply a new tag to an existing image")
-    async def image_tag(source_image: str, target_image: str) -> str:
+    @mcp.tool(
+        description="Apply a new tag to an existing image",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_tag(source_image: str, target_image: str) -> str:
         result = await run_container_command("image", "tag", source_image, target_image)
         return format_command_result(result)
 
-    @mcp.tool(description="Remove one or more images")
-    async def image_delete(images: List[str]) -> str:
+    @mcp.tool(
+        description="Remove one or more images",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_delete(images: List[str]) -> str:
         try:
             # Validate images parameter
             validated_images = validate_array_parameter(images, "images")
             if not validated_images:
-                raise ValueError("Parameter 'images' is required and cannot be empty. Provide at least one image name to delete.")
+                raise ValueError(
+                    "Parameter 'images' is required and cannot be empty. Provide at least one image name to delete."
+                )
 
             cmd_args = ["image", "rm"]
             cmd_args.extend(validated_images)
@@ -739,25 +1071,57 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in image_delete: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Remove all images")
-    async def image_delete_all() -> str:
+    @mcp.tool(
+        description="Remove all images",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_delete_all() -> str:
         result = await run_container_command("image", "rm", "--all")
         return format_command_result(result)
 
-    @mcp.tool(description="Remove unused (dangling) images")
-    async def image_prune() -> str:
+    @mcp.tool(
+        description="Remove unused (dangling) images",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_prune() -> str:
         result = await run_container_command("image", "prune")
         return format_command_result(result)
 
-    @mcp.tool(description="Show detailed information for one or more images in JSON")
-    async def image_inspect(image: str) -> str:
+    @mcp.tool(
+        description="Show detailed information for one or more images in JSON",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_image_inspect(image: str) -> str:
         result = await run_container_command("image", "inspect", image)
         return format_command_result(result)
 
     # BUILD OPERATION TOOLS
 
-    @mcp.tool(description="Build an OCI image from a local build context")
-    async def container_build(
+    @mcp.tool(
+        description="Build an OCI image from a local build context",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_container_build(
         path: str,
         tag: Optional[str] = None,
         file: Optional[str] = None,
@@ -769,12 +1133,18 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         os: str = "linux",
         cpus: float = 2.0,
         memory: str = "2048MB",
-        quiet: bool = False
+        quiet: bool = False,
     ) -> str:
         try:
             # Validate array parameters
-            validated_build_arg = validate_array_parameter(build_arg, "build_arg") if build_arg is not None else None
-            validated_label = validate_array_parameter(label, "label") if label is not None else None
+            validated_build_arg = (
+                validate_array_parameter(build_arg, "build_arg")
+                if build_arg is not None
+                else None
+            )
+            validated_label = (
+                validate_array_parameter(label, "label") if label is not None else None
+            )
 
             cmd_args = ["build"]
             if tag:
@@ -811,8 +1181,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
 
     # BUILDER MANAGEMENT TOOLS
 
-    @mcp.tool(description="Start the BuildKit builder container")
-    async def builder_start(cpus: float = 2.0, memory: str = "2048MB") -> str:
+    @mcp.tool(
+        description="Start the BuildKit builder container",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_builder_start(cpus: float = 2.0, memory: str = "2048MB") -> str:
         cmd_args = ["builder", "start"]
         if cpus != 2.0:
             cmd_args.extend(["--cpus", str(cpus)])
@@ -822,8 +1200,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Show the current status of the BuildKit builder")
-    async def builder_status(json: bool = False) -> str:
+    @mcp.tool(
+        description="Show the current status of the BuildKit builder",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_builder_status(json: bool = False) -> str:
         cmd_args = ["builder", "status"]
         if json:
             cmd_args.append("--json")
@@ -831,13 +1217,29 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Stop the BuildKit builder")
-    async def builder_stop() -> str:
+    @mcp.tool(
+        description="Stop the BuildKit builder",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_builder_stop() -> str:
         result = await run_container_command("builder", "stop")
         return format_command_result(result)
 
-    @mcp.tool(description="Remove the BuildKit builder container")
-    async def builder_delete(force: bool = False) -> str:
+    @mcp.tool(
+        description="Remove the BuildKit builder container",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_builder_delete(force: bool = False) -> str:
         cmd_args = ["builder", "rm"]
         if force:
             cmd_args.append("--force")
@@ -847,18 +1249,36 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
 
     # NETWORK MANAGEMENT TOOLS
 
-    @mcp.tool(description="Create a new network")
-    async def network_create(name: str) -> str:
+    @mcp.tool(
+        description="Create a new network",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_network_create(name: str) -> str:
         result = await run_container_command("network", "create", name)
         return format_command_result(result)
 
-    @mcp.tool(description="Delete one or more networks")
-    async def network_delete(networks: List[str]) -> str:
+    @mcp.tool(
+        description="Delete one or more networks",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_network_delete(networks: List[str]) -> str:
         try:
             # Validate networks parameter
             validated_networks = validate_array_parameter(networks, "networks")
             if not validated_networks:
-                raise ValueError("Parameter 'networks' is required and cannot be empty. Provide at least one network name to delete.")
+                raise ValueError(
+                    "Parameter 'networks' is required and cannot be empty. Provide at least one network name to delete."
+                )
 
             cmd_args = ["network", "rm"]
             cmd_args.extend(validated_networks)
@@ -869,13 +1289,29 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in network_delete: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Delete all networks")
-    async def network_delete_all() -> str:
+    @mcp.tool(
+        description="Delete all networks",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_network_delete_all() -> str:
         result = await run_container_command("network", "rm", "--all")
         return format_command_result(result)
 
-    @mcp.tool(description="List user-defined networks")
-    async def network_list(quiet: bool = False, format: str = "table") -> str:
+    @mcp.tool(
+        description="List user-defined networks",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_network_list(quiet: bool = False, format: str = "table") -> str:
         cmd_args = ["network", "ls"]
         if quiet:
             cmd_args.append("--quiet")
@@ -885,24 +1321,44 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Show detailed information about networks")
-    async def network_inspect(name: str) -> str:
+    @mcp.tool(
+        description="Show detailed information about networks",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_network_inspect(name: str) -> str:
         result = await run_container_command("network", "inspect", name)
         return format_command_result(result)
 
     # VOLUME MANAGEMENT TOOLS
 
-    @mcp.tool(description="Create a new volume")
-    async def volume_create(
+    @mcp.tool(
+        description="Create a new volume",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_volume_create(
         name: str,
         size: Optional[str] = None,
         opt: Optional[List[str]] = None,
-        label: Optional[List[str]] = None
+        label: Optional[List[str]] = None,
     ) -> str:
         try:
             # Validate array parameters
-            validated_opt = validate_array_parameter(opt, "opt") if opt is not None else None
-            validated_label = validate_array_parameter(label, "label") if label is not None else None
+            validated_opt = (
+                validate_array_parameter(opt, "opt") if opt is not None else None
+            )
+            validated_label = (
+                validate_array_parameter(label, "label") if label is not None else None
+            )
 
             cmd_args = ["volume", "create"]
             if size:
@@ -921,13 +1377,23 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in volume_create: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="Remove one or more volumes")
-    async def volume_delete(names: List[str]) -> str:
+    @mcp.tool(
+        description="Remove one or more volumes",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_volume_delete(names: List[str]) -> str:
         try:
             # Validate names parameter
             validated_names = validate_array_parameter(names, "names")
             if not validated_names:
-                raise ValueError("Parameter 'names' is required and cannot be empty. Provide at least one volume name to delete.")
+                raise ValueError(
+                    "Parameter 'names' is required and cannot be empty. Provide at least one volume name to delete."
+                )
 
             cmd_args = ["volume", "rm"]
             cmd_args.extend(validated_names)
@@ -938,8 +1404,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
             logger.error(f"Parameter validation error in volume_delete: {e}")
             return f"Parameter validation error: {str(e)}"
 
-    @mcp.tool(description="List volumes")
-    async def volume_list(quiet: bool = False, format: str = "table") -> str:
+    @mcp.tool(
+        description="List volumes",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_volume_list(quiet: bool = False, format: str = "table") -> str:
         cmd_args = ["volume", "ls"]
         if quiet:
             cmd_args.append("--quiet")
@@ -949,13 +1423,23 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Display detailed information for volumes")
-    async def volume_inspect(names: List[str]) -> str:
+    @mcp.tool(
+        description="Display detailed information for volumes",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_volume_inspect(names: List[str]) -> str:
         try:
             # Validate names parameter
             validated_names = validate_array_parameter(names, "names")
             if not validated_names:
-                raise ValueError("Parameter 'names' is required and cannot be empty. Provide at least one volume name to inspect.")
+                raise ValueError(
+                    "Parameter 'names' is required and cannot be empty. Provide at least one volume name to inspect."
+                )
 
             cmd_args = ["volume", "inspect"]
             cmd_args.extend(validated_names)
@@ -968,12 +1452,20 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
 
     # REGISTRY MANAGEMENT TOOLS
 
-    @mcp.tool(description="Authenticate with a registry")
-    async def registry_login(
+    @mcp.tool(
+        description="Authenticate with a registry",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    async def acms_registry_login(
         server: str,
         username: Optional[str] = None,
         password_stdin: bool = False,
-        scheme: str = "auto"
+        scheme: str = "auto",
     ) -> str:
         cmd_args = ["registry", "login"]
         if username:
@@ -987,24 +1479,48 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Log out of a registry")
-    async def registry_logout(server: str) -> str:
+    @mcp.tool(
+        description="Log out of a registry",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    async def acms_registry_logout(server: str) -> str:
         result = await run_container_command("registry", "logout", server)
         return format_command_result(result)
 
-    @mcp.tool(description="Manage the default registry")
-    async def registry_default() -> str:
+    @mcp.tool(
+        description="Manage the default registry",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    async def acms_registry_default() -> str:
         result = await run_container_command("registry", "default")
         return format_command_result(result)
 
     # SYSTEM MANAGEMENT TOOLS
 
-    @mcp.tool(description="Start the container services")
-    async def system_start(
+    @mcp.tool(
+        description="Start the container services",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_start(
         app_root: Optional[str] = None,
         install_root: Optional[str] = None,
         enable_kernel_install: bool = False,
-        disable_kernel_install: bool = False
+        disable_kernel_install: bool = False,
     ) -> str:
         cmd_args = ["system", "start"]
         if app_root:
@@ -1019,8 +1535,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Stop the container services")
-    async def system_stop(prefix: Optional[str] = None) -> str:
+    @mcp.tool(
+        description="Stop the container services",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_stop(prefix: Optional[str] = None) -> str:
         cmd_args = ["system", "stop"]
         if prefix:
             cmd_args.extend(["--prefix", prefix])
@@ -1028,8 +1552,16 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Display logs from the container services")
-    async def system_logs(last: str = "5m", follow: bool = False) -> str:
+    @mcp.tool(
+        description="Display logs from the container services",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_logs(last: str = "5m", follow: bool = False) -> str:
         cmd_args = ["system", "logs"]
         if last != "5m":
             cmd_args.extend(["--last", last])
@@ -1039,32 +1571,72 @@ def create_fastmcp_server() -> fastmcp.FastMCP:
         result = await run_container_command(*cmd_args)
         return format_command_result(result)
 
-    @mcp.tool(description="Create a local DNS domain for containers")
-    async def system_dns_create(name: str) -> str:
+    @mcp.tool(
+        description="Create a local DNS domain for containers",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_dns_create(name: str) -> str:
         result = await run_container_command("system", "dns", "create", name)
         return format_command_result(result)
 
-    @mcp.tool(description="Delete a local DNS domain")
-    async def system_dns_delete(name: str) -> str:
+    @mcp.tool(
+        description="Delete a local DNS domain",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_dns_delete(name: str) -> str:
         result = await run_container_command("system", "dns", "rm", name)
         return format_command_result(result)
 
-    @mcp.tool(description="List configured local DNS domains")
-    async def system_dns_list() -> str:
+    @mcp.tool(
+        description="List configured local DNS domains",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_dns_list() -> str:
         result = await run_container_command("system", "dns", "ls")
         return format_command_result(result)
 
-    @mcp.tool(description="Manage the default local DNS domain")
-    async def system_dns_default() -> str:
+    @mcp.tool(
+        description="Manage the default local DNS domain",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_dns_default() -> str:
         result = await run_container_command("system", "dns", "default")
         return format_command_result(result)
 
-    @mcp.tool(description="Install or update the Linux kernel")
-    async def system_kernel_set(
+    @mcp.tool(
+        description="Install or update the Linux kernel",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_kernel_set(
         binary: Optional[str] = None,
         tar: Optional[str] = None,
         arch: Optional[str] = None,
-        recommended: bool = False
+        recommended: bool = False,
     ) -> str:
         cmd_args = ["system", "kernel", "set"]
         if binary:
@@ -1096,58 +1668,77 @@ Examples:
   python3 acms.py --port 8765              # HTTP server on port 8765
   python3 acms.py --ssl --port 8443        # HTTPS server with SSL on port 8443
   python3 acms.py --ssl --host 127.0.0.1   # HTTPS server on localhost only
-        """
+        """,
     )
 
     parser.add_argument(
-        "--port", "-p",
+        "--port",
+        "-p",
         type=int,
         default=8765,
-        help="Port to bind the server to (default: 8765)"
+        help="Port to bind the server to (default: 8765)",
     )
 
     parser.add_argument(
         "--host",
         type=str,
         default="0.0.0.0",
-        help="Host/IP to bind the server to (default: 0.0.0.0)"
+        help="Host/IP to bind the server to (default: 0.0.0.0)",
     )
 
     parser.add_argument(
         "--ssl",
         action="store_true",
-        help="Enable SSL/TLS (HTTPS) mode. Requires server.crt and server.key in current directory"
+        help="Enable SSL/TLS (HTTPS) mode. Requires server.crt and server.key in current directory",
     )
 
     parser.add_argument(
         "--cert-file",
         type=str,
         default="server.crt",
-        help="Path to SSL certificate file (default: server.crt)"
+        help="Path to SSL certificate file (default: server.crt)",
     )
 
     parser.add_argument(
         "--key-file",
         type=str,
         default="server.key",
-        help="Path to SSL private key file (default: server.key)"
+        help="Path to SSL private key file (default: server.key)",
     )
 
     parser.add_argument(
         "--http",
         type=int,
         dest="port",
-        help="Legacy: specify port for HTTP mode (same as --port)"
+        help="Legacy: specify port for HTTP mode (same as --port)",
+    )
+
+    parser.add_argument(
+        "--enable-auth",
+        action="store_true",
+        help="Enable OAuth 2.1 authentication with Microsoft Entra ID (requires .env configuration)",
+    )
+
+    parser.add_argument(
+        "--resource-url",
+        type=str,
+        help="Resource server URL for OAuth identification (default: http://localhost:PORT)",
+    )
+
+    parser.add_argument(
+        "--required-scopes",
+        type=str,
+        nargs="*",
+        help="Required OAuth scopes for authentication (space-separated)",
     )
 
     return parser.parse_args()
 
 
 async def main() -> None:
-
-    logger.info("="*80)
+    logger.info("=" * 80)
     logger.info("Starting Apple Container MCP Server (ACMS)")
-    logger.info("="*80)
+    logger.info("=" * 80)
 
     # Parse command line arguments
     args = parse_arguments()
@@ -1157,32 +1748,51 @@ async def main() -> None:
     use_ssl = args.ssl
     cert_file = args.cert_file
     key_file = args.key_file
+    enable_auth = args.enable_auth
+    required_scopes = args.required_scopes if args.required_scopes else []
+
+    # Determine resource server URL
+    protocol = "https" if use_ssl else "http"
+    resource_url = (
+        args.resource_url if args.resource_url else f"{protocol}://{host}:{port}"
+    )
 
     # Log environment info
     if not check_container_available():
-        logger.critical("container CLI not found. Please install Apple's container tool.")
-        logger.critical("See: https://github.com/apple/container for installation instructions.")
+        logger.critical(
+            "container CLI not found. Please install Apple's container tool."
+        )
+        logger.critical(
+            "See: https://github.com/apple/container for installation instructions."
+        )
 
     # Validate SSL configuration if SSL is enabled
     if use_ssl:
         if not os.path.isfile(cert_file):
             logger.critical(f"SSL certificate file not found: {cert_file}")
-            logger.critical("Please ensure the certificate file exists or use --cert-file to specify the correct path")
+            logger.critical(
+                "Please ensure the certificate file exists or use --cert-file to specify the correct path"
+            )
             sys.exit(1)
 
         if not os.path.isfile(key_file):
             logger.critical(f"SSL private key file not found: {key_file}")
-            logger.critical("Please ensure the private key file exists or use --key-file to specify the correct path")
+            logger.critical(
+                "Please ensure the private key file exists or use --key-file to specify the correct path"
+            )
             sys.exit(1)
 
         logger.info(f"SSL enabled - using cert: {cert_file}, key: {key_file}")
 
-    protocol = "https" if use_ssl else "http"
     logger.info(f"ACMS: {protocol}://{host}:{port}/mcp")
 
     try:
-        # Create FastMCP server
-        mcp = create_fastmcp_server()
+        # Create FastMCP server with optional OAuth authentication
+        mcp = create_fastmcp_server(
+            enable_auth=enable_auth,
+            resource_server_url=resource_url,
+            required_scopes=required_scopes,
+        )
 
         # Get the HTTP app
         app = mcp.http_app()
@@ -1207,7 +1817,7 @@ async def main() -> None:
             logger.info("Server shutdown initiated")
 
         # Apply lifespan to the app if it doesn't already have one
-        if not hasattr(app, 'router') or not hasattr(app.router, 'lifespan_context'):
+        if not hasattr(app, "router") or not hasattr(app.router, "lifespan_context"):
             app.router.lifespan_context = lifespan
 
         # Custom uvicorn config for maximum logging
@@ -1218,15 +1828,12 @@ async def main() -> None:
             "log_level": "debug",  # Maximum supported verbosity
             "access_log": True,
             "use_colors": True,
-            "loop": "asyncio"
+            "loop": "asyncio",
         }
 
         # Add SSL configuration if enabled
         if use_ssl:
-            config_kwargs.update({
-                "ssl_certfile": cert_file,
-                "ssl_keyfile": key_file
-            })
+            config_kwargs.update({"ssl_certfile": cert_file, "ssl_keyfile": key_file})
             logger.info(f"SSL configuration: certfile={cert_file}, keyfile={key_file}")
 
         config = uvicorn.Config(**config_kwargs)
@@ -1245,6 +1852,7 @@ async def main() -> None:
     finally:
         logger.info("ACMS shutdown complete")
 
+
 def cli_main():
     """Entry point for the pip-installed acms command."""
     try:
@@ -1254,6 +1862,7 @@ def cli_main():
     except Exception as e:
         print(f"Fatal error: {e}", file=sys.stderr)
         raise
+
 
 if __name__ == "__main__":
     cli_main()
