@@ -66,8 +66,6 @@ class EntraTokenVerifier(TokenVerifier):
                 logger.error(f"Failed to get signing key: {e}")
                 return None
 
-            logger.info(f"Signing Key: {signing_key}")  # REMOVE THIS LATER
-
             # Decode and validate JWT (without issuer check first)
             try:
                 payload = jwt.decode(
