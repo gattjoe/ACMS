@@ -62,3 +62,5 @@ ACMS includes comprehensive end-to-end testing, just tell Claude to run the "ACM
 ## Security Considerations
 
 This is not secure, especially if you run it on a remote Mac OS endpoint on your home net.
+
+mcp-name: io.github.gattjoe/ACMS

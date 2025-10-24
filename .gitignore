@@ -147,3 +147,7 @@ server.key
 
 # Node
 node_modules/
+
+# MCP Registry
+.mcpregistry_github_token
+.mcpregistry_registry_token
