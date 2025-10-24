@@ -7,3 +7,6 @@
 - Added OAuth support for Entra
 - Added AI generated command validation logic :)
 - Updated dependencies
+
+# v0.0.3
+- Publish to MCP registry

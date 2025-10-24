@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-10-17/server.schema.json",
+  "name": "io.github.gattjoe/ACMS",
+  "description": "Apple Container MCP Server (ACMS) provides access to Apple's container CLI tool on macOS",
+  "repository": {
+    "url": "https://github.com/gattjoe/ACMS",
+    "source": "github"
+  },
+  "version": "0.0.3",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "ACMS",
+      "version": "0.0.3",
+      "environmentVariables": [],
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:8765/mcp"
+      }
+    }
+  ]
+}
