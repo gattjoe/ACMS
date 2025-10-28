@@ -1492,19 +1492,6 @@ def create_fastmcp_server(
         result = await run_container_command("registry", "logout", server)
         return format_command_result(result)
 
-    @mcp.tool(
-        description="Manage the default registry",
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": True,
-        },
-    )
-    async def acms_registry_default() -> str:
-        result = await run_container_command("registry", "default")
-        return format_command_result(result)
-
     # SYSTEM MANAGEMENT TOOLS
 
     @mcp.tool(
@@ -1611,19 +1598,6 @@ def create_fastmcp_server(
         return format_command_result(result)
 
     @mcp.tool(
-        description="Manage the default local DNS domain",
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": False,
-        },
-    )
-    async def acms_system_dns_default() -> str:
-        result = await run_container_command("system", "dns", "default")
-        return format_command_result(result)
-
-    @mcp.tool(
         description="Install or update the Linux kernel",
         annotations={
             "readOnlyHint": False,
@@ -1649,6 +1623,58 @@ def create_fastmcp_server(
             cmd_args.append("--recommended")
 
         result = await run_container_command(*cmd_args)
+        return format_command_result(result)
+
+    @mcp.tool(
+        description="List all system properties",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_property_list() -> str:
+        result = await run_container_command("system", "property", "list")
+        return format_command_result(result)
+
+    @mcp.tool(
+        description="Get the value of a system property",
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_property_get(key: str) -> str:
+        result = await run_container_command("system", "property", "get", key)
+        return format_command_result(result)
+
+    @mcp.tool(
+        description="Set a system property value",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_property_set(key: str, value: str) -> str:
+        result = await run_container_command("system", "property", "set", key, value)
+        return format_command_result(result)
+
+    @mcp.tool(
+        description="Clear a system property",
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
+    async def acms_system_property_clear(key: str) -> str:
+        result = await run_container_command("system", "property", "clear", key)
         return format_command_result(result)
 
     # Create a custom connection logger that will track all MCP connections
@@ -1802,14 +1828,7 @@ async def main() -> None:
 
         @asynccontextmanager
         async def lifespan(app):
-            # Startup
-            logger.info("UVICORN SERVER STARTUP COMPLETE")
-            logger.info(f"Server is now listening on {host}:{port}")
             logger.info(f"MCP endpoint: {protocol}://{host}:{port}/mcp")
-            if use_ssl:
-                logger.info("Running in HTTPS mode")
-            else:
-                logger.info("Running in HTTP mode")
 
             yield
 

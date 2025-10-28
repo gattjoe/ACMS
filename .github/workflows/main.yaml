@@ -62,3 +62,25 @@ jobs:
         uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # tag=v1.13
         with:
           verbose: true
+
+  publish-mcp:
+    if: ${{ (github.repository == 'gattjoe/ACMS') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    needs:
+      - publish
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # tag=v5.0.0
+      - name: Download MCP publisher
+        run: |
+          curl -L -o mcp-publisher https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher-linux-amd64
+          chmod +x mcp-publisher
+      - name: Login to MCP registry
+        run: |
+          ./mcp-publisher login github-oidc
+      - name: Publish to MCP registry
+        run: |
+          ./mcp-publisher publish

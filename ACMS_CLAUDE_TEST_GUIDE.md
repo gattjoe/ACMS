@@ -78,18 +78,17 @@ mcp__acms__builder_stop
 mcp__acms__builder_delete
 ```
 
-#### 8. Registry Operations
-```
-mcp__acms__registry_default
-```
-**Note**: Limited testing scope (no credentials for login/logout)
-
-#### 9. System Operations
+#### 8. System Operations
 ```
 mcp__acms__system_logs (with last="30s" or similar)
 mcp__acms__system_dns_list
 mcp__acms__system_dns_default
+mcp__acms__system_property_list (list all system properties)
+mcp__acms__system_property_get (get a specific property value)
+mcp__acms__system_property_set (set a property value)
+mcp__acms__system_property_clear (clear a property value)
 ```
+**Note**: System property operations allow reading and managing container system configuration properties
 
 ### Key Testing Principles
 
@@ -133,7 +132,7 @@ Error: Input validation error: '["item-name"]' is not valid under any of the giv
 
 ## Test Summary
 **Date**: [DATE]
-**Success Rate**: X/40 functions (Y%)
+**Success Rate**: X/42 functions (Y%)
 **Status**: [BREAKTHROUGH/REGRESSION/STABLE]
 
 ## System Environment
@@ -149,7 +148,6 @@ Error: Input validation error: '["item-name"]' is not valid under any of the giv
 ### ✅ Network Operations: [X/4 functions]
 ### ✅ Volume Operations: [X/4 functions]
 ### ✅ Builder Operations: [X/4 functions]
-### ✅ Registry Operations: [X/1 functions]
 ### ✅ System Operations: [X/3 functions]
 
 ## Key Findings

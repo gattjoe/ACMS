@@ -10,3 +10,6 @@
 
 # v0.0.3
 - Publish to MCP registry
+
+# v0.0.4
+- Support for Containerization 0.12.1 and Container 0.5.0
