@@ -15,15 +15,12 @@ import logging
 import os
 import shutil
 import sys
-import time
-import uuid
 from typing import Any, Dict, List, Optional, TypeAlias
 
 import fastmcp
 import uvicorn
 from dotenv import load_dotenv
-
-from auth import EntraAuthProvider
+from fastmcp.server.auth.providers.azure import AzureProvider
 
 # Load environment variables
 load_dotenv()
@@ -131,18 +128,15 @@ async def run_container_command(*args: str) -> CommandResult:
         RuntimeError: If command execution fails
         ValueError: If arguments contain forbidden characters
     """
-    start_time = time.time()
-    command_id = str(uuid.uuid4())[:8]
-
     # Validate all arguments to prevent command injection
     try:
         validated_args = [_validate_container_arg(arg) for arg in args]
     except ValueError as e:
-        logger.error(f"[Command {command_id}] Argument validation failed: {e}")
+        logger.error(f"[Argument validation failed: {e}")
         raise ValueError(f"Invalid command argument: {e}")
 
     cmd = ["container"] + validated_args
-    logger.info(f"[Command {command_id}] Executing: {' '.join(cmd)}")
+    logger.info(f"Executing: {' '.join(cmd)}")
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -153,38 +147,28 @@ async def run_container_command(*args: str) -> CommandResult:
 
         stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
         stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
-        duration = time.time() - start_time
 
         result = {
             "stdout": stdout_text,
             "stderr": stderr_text,
             "return_code": process.returncode,
             "command": " ".join(cmd),
-            "duration": duration,
-            "command_id": command_id,
         }
 
         # Log command completion with detailed results
         if process.returncode == 0:
-            logger.info(
-                f"[Command {command_id}] Completed successfully (exit code: 0) in {duration:.3f}s"
-            )
+            logger.info("Completed successfully (exit code: 0)")
         else:
-            logger.warning(
-                f"[Command {command_id}] Failed with exit code: {process.returncode} in {duration:.3f}s"
-            )
+            logger.warning(f"[Failed with exit code: {process.returncode}")
             if stderr_text:
-                logger.warning(
-                    f"[Command {command_id}] Error output: {stderr_text.strip()}"
-                )
+                logger.warning(f"Error output: {stderr_text.strip()}")
 
         return result
 
     except Exception as e:
-        duration = time.time() - start_time
         error_msg = f"Exception executing command '{' '.join(cmd)}': {e}"
-        logger.error(f"[Command {command_id}] {error_msg}")
-        logger.error(f"[Command {command_id}] Stack trace:", exc_info=True)
+        logger.error(f"{error_msg}")
+        logger.error("Stack trace:", exc_info=True)
 
         raise RuntimeError(f"Failed to execute command: {e}")
 
@@ -299,7 +283,7 @@ def create_fastmcp_server(
 
     Args:
         enable_auth: Enable OAuth 2.1 authentication with Microsoft Entra ID
-        resource_server_url: URL of this MCP server (for OAuth resource identification)
+        resource_server_url: URL of this MCP server
         required_scopes: List of OAuth scopes required for authentication
 
     Returns:
@@ -310,15 +294,46 @@ def create_fastmcp_server(
 
     # Configure OAuth authentication if enabled
     if enable_auth:
-        logger.info("OAuth authentication ENABLED")
-
         try:
-            # Create auth provider from environment variables
-            auth_provider = EntraAuthProvider.from_env(
-                base_url=resource_server_url, required_scopes=required_scopes
+            # Get Azure configuration from environment variables
+            tenant_id = os.getenv("ENTRA_TENANT_ID")
+            client_id = os.getenv("ENTRA_CLIENT_ID")
+            client_secret = os.getenv("ENTRA_CLIENT_SECRET")
+            env_scopes = os.getenv("ENTRA_REQUIRED_SCOPES")
+
+            if not tenant_id:
+                raise ValueError("ENTRA_TENANT_ID environment variable is required")
+            if not client_id:
+                raise ValueError("ENTRA_CLIENT_ID environment variable is required")
+            if not client_secret:
+                raise ValueError("ENTRA_CLIENT_SECRET environment variable is required")
+            if not env_scopes:
+                raise ValueError(
+                    "ENTRA_REQUIRED_SCOPES environment variable is required"
+                )
+
+            if env_scopes:
+                # Parse scopes from environment (comma or space separated)
+                scopes_list = [
+                    s.strip() for s in env_scopes.replace(",", " ").split() if s.strip()
+                ]
+            elif required_scopes:
+                scopes_list = required_scopes
+            else:
+                raise ValueError(
+                    "At least one scope must be specified via ENTRA_REQUIRED_SCOPES or --required-scopes"
+                )
+            logger.info(client_id)
+            # Create AzureProvider with configuration
+            auth_provider = AzureProvider(
+                client_id=client_id,
+                client_secret=client_secret,
+                tenant_id=tenant_id,
+                base_url=resource_server_url
+                or os.getenv("MCP_SERVER_BASE_URL", "http://localhost:8765"),
+                required_scopes=scopes_list,
             )
 
-            logger.info("Auth Settings:")
             logger.info(
                 f"  Resource Server URL: {resource_server_url or 'http://localhost:8765'}"
             )
@@ -333,10 +348,11 @@ def create_fastmcp_server(
             logger.error(
                 f"Failed to initialize OAuth authentication: {e}", exc_info=True
             )
-            logger.error("Falling back to unauthenticated server")
-            mcp = fastmcp.FastMCP("ACMS")
+            logger.critical(
+                "Cannot start server without valid OAuth configuration. Exiting."
+            )
+            sys.exit(1)
     else:
-        logger.info("OAuth authentication DISABLED")
         mcp = fastmcp.FastMCP("ACMS")
 
     @mcp.tool(
@@ -1691,10 +1707,8 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python3 acms.py --port 8765              # HTTP server on port 8765
   python3 acms.py --ssl --port 8443        # HTTPS server with SSL on port 8443
-  python3 acms.py --ssl --host 127.0.0.1   # HTTPS server on localhost only
-        """,
+  python3 acms.py --host 127.0.0.1   # HTTP server on localhost""",
     )
 
     parser.add_argument(
@@ -1708,8 +1722,8 @@ Examples:
     parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
-        help="Host/IP to bind the server to (default: 0.0.0.0)",
+        default="127.0.0.1",
+        help="Host/IP to bind the server to (default: 127.0.0.1)",
     )
 
     parser.add_argument(
@@ -1748,7 +1762,7 @@ Examples:
     parser.add_argument(
         "--resource-url",
         type=str,
-        help="Resource server URL for OAuth identification (default: http://localhost:PORT)",
+        help="Resource server URL for OAuth identification (default: http://127.0.0.1:PORT)",
     )
 
     parser.add_argument(
@@ -1762,9 +1776,9 @@ Examples:
 
 
 async def main() -> None:
-    logger.info("=" * 80)
+    logger.info("=" * 50)
     logger.info("Starting Apple Container MCP Server (ACMS)")
-    logger.info("=" * 80)
+    logger.info("=" * 50)
 
     # Parse command line arguments
     args = parse_arguments()
@@ -1810,7 +1824,7 @@ async def main() -> None:
 
         logger.info(f"SSL enabled - using cert: {cert_file}, key: {key_file}")
 
-    logger.info(f"ACMS: {protocol}://{host}:{port}/mcp")
+    logger.info(f"ACMS: {resource_url}/mcp")
 
     try:
         # Create FastMCP server with optional OAuth authentication
@@ -1828,7 +1842,7 @@ async def main() -> None:
 
         @asynccontextmanager
         async def lifespan(app):
-            logger.info(f"MCP endpoint: {protocol}://{host}:{port}/mcp")
+            logger.info(f"MCP endpoint: {resource_url}/mcp")
 
             yield
 
@@ -1844,10 +1858,11 @@ async def main() -> None:
             "app": app,
             "host": host,
             "port": port,
-            "log_level": "debug",  # Maximum supported verbosity
+            "log_level": "debug",
             "access_log": True,
             "use_colors": True,
             "loop": "asyncio",
+            "ws": "websockets-sansio",
         }
 
         # Add SSL configuration if enabled

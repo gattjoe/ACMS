@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ACMS"
-version = "0.0.4"
+version = "0.0.5"
 license = "Apache-2.0"
 description = "ACMS is a Model Context Protocol (MCP) server that provides programmatic access to Apple's container CLI tool on macOS."
-dependencies = ["fastmcp>=2.12", "mcp>=1.14"]
+dependencies = ["fastmcp>=2.13", "mcp>=1.20"]
 
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Joe Gatt", email = "gattjoe@users.noreply.github.com" }]
@@ -60,4 +60,4 @@ pythonPlatform = "All"
 typeCheckingMode = "standard"
 
 [tool.setuptools]
-py-modules = ["acms", "auth"]
+py-modules = ["acms"]

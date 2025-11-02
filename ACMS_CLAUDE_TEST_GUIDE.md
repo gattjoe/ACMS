@@ -7,7 +7,7 @@ This guide provides Claude with instructions to perform comprehensive end-to-end
 
 ### Prerequisites
 - Ensure you're connected to acms via `/mcp` command
-- acms should be running (container-apiserver version 0.4.1 expected)
+- acms should be running
 - Use TodoWrite tool to track progress through all test categories
 
 ### Test Categories (Execute in Order)
