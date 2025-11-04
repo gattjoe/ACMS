@@ -20,5 +20,5 @@ jobs:
       - run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install pytest pytest-asyncio
-          python -m install -e .
+          pip install -e .
           pytest tests/smoke_test_acms.py -v
