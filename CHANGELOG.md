@@ -18,3 +18,7 @@
 - Upgrade FastMCP and MCP to latest versions
 - Remove custom auth module and implement FastMCP's new AzureProvider
 - Update CI to publish to MCP registry
+
+# v0.0.6
+- Added smoke tests
+- Ran black and isort on acms.py
