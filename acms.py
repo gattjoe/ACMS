@@ -8,19 +8,19 @@ Usage:
   python3 acms.py --ssl --port 8443        # HTTPS server with SSL on port 8443
 """
 
-import asyncio
+from typing import TypeAlias, Optional, List, Dict, Any
 import argparse
-import json
 import logging
-import os
+import asyncio
 import shutil
+import json
 import sys
-from typing import Any, Dict, List, Optional, TypeAlias
+import os
 
-import fastmcp
-import uvicorn
-from dotenv import load_dotenv
 from fastmcp.server.auth.providers.azure import AzureProvider
+from dotenv import load_dotenv
+import uvicorn
+import fastmcp
 
 # Load environment variables
 load_dotenv()
@@ -97,9 +97,7 @@ def _validate_container_arg(arg: str) -> str:
 
     # Additional check for shell metacharacters
     if arg.strip().startswith("-") and any(c in arg for c in ["$(", "${", "`"]):
-        raise ValueError(
-            f"Argument appears to contain shell command substitution: {arg}. "
-        )
+        raise ValueError(f"Argument appears to contain shell command substitution: {arg}. ")
 
     return arg
 
@@ -207,9 +205,7 @@ def validate_array_parameter(param: Any, param_name: str) -> Optional[List[str]]
         # Try to parse as JSON array
         try:
             parsed = json.loads(param)
-            if isinstance(parsed, list) and all(
-                isinstance(item, str) for item in parsed
-            ):
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
                 if len(parsed) == 0:
                     raise ValueError(
                         f"Parameter '{param_name}' cannot be an empty array. Either omit the parameter or provide at least one item."
@@ -254,7 +250,9 @@ def format_command_result(result: CommandResult) -> str:
             if result["stderr"]:
                 response += f"\\nWarnings/Info:\\n{result['stderr']}"
         else:
-            response = f"Command failed with exit code {result['return_code']}:\\n{result['command']}\\n"
+            response = (
+                f"Command failed with exit code {result['return_code']}:\\n{result['command']}\\n"
+            )
             if duration > 0:
                 response += f"Duration: {duration:.3f}s\\n\\n"
             else:
@@ -308,15 +306,11 @@ def create_fastmcp_server(
             if not client_secret:
                 raise ValueError("ENTRA_CLIENT_SECRET environment variable is required")
             if not env_scopes:
-                raise ValueError(
-                    "ENTRA_REQUIRED_SCOPES environment variable is required"
-                )
+                raise ValueError("ENTRA_REQUIRED_SCOPES environment variable is required")
 
             if env_scopes:
                 # Parse scopes from environment (comma or space separated)
-                scopes_list = [
-                    s.strip() for s in env_scopes.replace(",", " ").split() if s.strip()
-                ]
+                scopes_list = [s.strip() for s in env_scopes.replace(",", " ").split() if s.strip()]
             elif required_scopes:
                 scopes_list = required_scopes
             else:
@@ -334,9 +328,7 @@ def create_fastmcp_server(
                 required_scopes=scopes_list,
             )
 
-            logger.info(
-                f"  Resource Server URL: {resource_server_url or 'http://localhost:8765'}"
-            )
+            logger.info(f"  Resource Server URL: {resource_server_url or 'http://localhost:8765'}")
             logger.info(f"  Required Scopes: {required_scopes or []}")
 
             # Create FastMCP with OAuth
@@ -345,12 +337,8 @@ def create_fastmcp_server(
             logger.info("FastMCP server created with OAuth authentication")
 
         except Exception as e:
-            logger.error(
-                f"Failed to initialize OAuth authentication: {e}", exc_info=True
-            )
-            logger.critical(
-                "Cannot start server without valid OAuth configuration. Exiting."
-            )
+            logger.error(f"Failed to initialize OAuth authentication: {e}", exc_info=True)
+            logger.critical("Cannot start server without valid OAuth configuration. Exiting.")
             sys.exit(1)
     else:
         mcp = fastmcp.FastMCP("ACMS")
@@ -442,20 +430,14 @@ def create_fastmcp_server(
         try:
             # Validate all array parameters
             validated_command = (
-                validate_array_parameter(command, "command")
-                if command is not None
-                else None
+                validate_array_parameter(command, "command") if command is not None else None
             )
-            validated_env = (
-                validate_array_parameter(env, "env") if env is not None else None
-            )
+            validated_env = validate_array_parameter(env, "env") if env is not None else None
             validated_mount = (
                 validate_array_parameter(mount, "mount") if mount is not None else None
             )
             validated_publish = (
-                validate_array_parameter(publish, "publish")
-                if publish is not None
-                else None
+                validate_array_parameter(publish, "publish") if publish is not None else None
             )
             validated_publish_socket = (
                 validate_array_parameter(publish_socket, "publish_socket")
@@ -466,13 +448,9 @@ def create_fastmcp_server(
                 validate_array_parameter(tmpfs, "tmpfs") if tmpfs is not None else None
             )
             validated_volume = (
-                validate_array_parameter(volume, "volume")
-                if volume is not None
-                else None
+                validate_array_parameter(volume, "volume") if volume is not None else None
             )
-            validated_dns = (
-                validate_array_parameter(dns, "dns") if dns is not None else None
-            )
+            validated_dns = validate_array_parameter(dns, "dns") if dns is not None else None
             validated_dns_search = (
                 validate_array_parameter(dns_search, "dns_search")
                 if dns_search is not None
@@ -601,22 +579,14 @@ def create_fastmcp_server(
         try:
             # Validate all array parameters
             validated_command = (
-                validate_array_parameter(command, "command")
-                if command is not None
-                else None
+                validate_array_parameter(command, "command") if command is not None else None
             )
-            validated_env = (
-                validate_array_parameter(env, "env") if env is not None else None
-            )
+            validated_env = validate_array_parameter(env, "env") if env is not None else None
             validated_publish = (
-                validate_array_parameter(publish, "publish")
-                if publish is not None
-                else None
+                validate_array_parameter(publish, "publish") if publish is not None else None
             )
             validated_volume = (
-                validate_array_parameter(volume, "volume")
-                if volume is not None
-                else None
+                validate_array_parameter(volume, "volume") if volume is not None else None
             )
             validated_mount = (
                 validate_array_parameter(mount, "mount") if mount is not None else None
@@ -778,9 +748,7 @@ def create_fastmcp_server(
             "openWorldHint": False,
         },
     )
-    async def acms_container_stop_all(
-        signal: str = "SIGTERM", time: Optional[float] = None
-    ) -> str:
+    async def acms_container_stop_all(signal: str = "SIGTERM", time: Optional[float] = None) -> str:
         cmd_args = ["stop", "--all"]
         if signal != "SIGTERM":
             cmd_args.extend(["--signal", signal])
@@ -903,9 +871,7 @@ def create_fastmcp_server(
     ) -> str:
         try:
             # Validate array parameters
-            validated_env = (
-                validate_array_parameter(env, "env") if env is not None else None
-            )
+            validated_env = validate_array_parameter(env, "env") if env is not None else None
 
             cmd_args = ["exec"]
             if interactive:
@@ -1154,9 +1120,7 @@ def create_fastmcp_server(
         try:
             # Validate array parameters
             validated_build_arg = (
-                validate_array_parameter(build_arg, "build_arg")
-                if build_arg is not None
-                else None
+                validate_array_parameter(build_arg, "build_arg") if build_arg is not None else None
             )
             validated_label = (
                 validate_array_parameter(label, "label") if label is not None else None
@@ -1369,9 +1333,7 @@ def create_fastmcp_server(
     ) -> str:
         try:
             # Validate array parameters
-            validated_opt = (
-                validate_array_parameter(opt, "opt") if opt is not None else None
-            )
+            validated_opt = validate_array_parameter(opt, "opt") if opt is not None else None
             validated_label = (
                 validate_array_parameter(label, "label") if label is not None else None
             )
@@ -1793,18 +1755,12 @@ async def main() -> None:
 
     # Determine resource server URL
     protocol = "https" if use_ssl else "http"
-    resource_url = (
-        args.resource_url if args.resource_url else f"{protocol}://{host}:{port}"
-    )
+    resource_url = args.resource_url if args.resource_url else f"{protocol}://{host}:{port}"
 
     # Log environment info
     if not check_container_available():
-        logger.critical(
-            "container CLI not found. Please install Apple's container tool."
-        )
-        logger.critical(
-            "See: https://github.com/apple/container for installation instructions."
-        )
+        logger.critical("container CLI not found. Please install Apple's container tool.")
+        logger.critical("See: https://github.com/apple/container for installation instructions.")
 
     # Validate SSL configuration if SSL is enabled
     if use_ssl:
@@ -1836,22 +1792,6 @@ async def main() -> None:
 
         # Get the HTTP app
         app = mcp.http_app()
-
-        # Add lifespan events using modern approach
-        from contextlib import asynccontextmanager
-
-        @asynccontextmanager
-        async def lifespan(app):
-            logger.info(f"MCP endpoint: {resource_url}/mcp")
-
-            yield
-
-            # Shutdown
-            logger.info("Server shutdown initiated")
-
-        # Apply lifespan to the app if it doesn't already have one
-        if not hasattr(app, "router") or not hasattr(app.router, "lifespan_context"):
-            app.router.lifespan_context = lifespan
 
         # Custom uvicorn config for maximum logging
         config_kwargs = {
