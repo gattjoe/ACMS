@@ -1,5 +1,9 @@
 # ACMS (Apple Container MCP Server)
 
+[![Downloads](https://pepy.tech/badge/acms/month)](https://pepy.tech/project/acms)
+[![PyPI Version](https://img.shields.io/pypi/v/acms.svg)](https://pypi.org/project/acms/)
+[![Python version](https://img.shields.io/pypi/pyversions/acms.svg)](https://pypi.org/project/acms/)
+
 **ACMS** is a Model Context Protocol (MCP) server that provides programmatic access to Apple's container CLI tool on macOS. ACMS can be run locally or accessed remotely via HTTP/S.
 
 The point of ACMS is to bring attention to the [Containerization](https://github.com/apple/containerization) package and [cli](https://github.com/apple/container) efforts. Inspiration for ACMS came from [coderunner](https://github.com/instavm/coderunner).
