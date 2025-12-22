@@ -33,3 +33,6 @@
 # v0.0.9
 - Update tools to support container CLI 0.7.1
 - Update dependencies
+
+# v0.1.0
+- Update server.json schema version :/
